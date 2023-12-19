@@ -1,48 +1,32 @@
 module ObjectStore
 
+using object_store_ffi_jll: libobject_store_ffi
 
-export init_rust_store, blob_get!, blob_put, AzureCredentials, RustStoreConfig
+include("generated/LibObjectStore.jl")
+using .LibObjectStore
 
-const rust_lib_dir = @static if Sys.islinux() || Sys.isapple()
-    joinpath(
-        @__DIR__,
-        "..",
-        "deps",
-        "rust_store",
-        "target",
-        "release",
-    )
-elseif Sys.iswindows()
-    @warn("The rust-store library is currently unsupported on Windows.")
-end
+export init_object_store, blob_get!, blob_put, AzureCredentials, ObjectStoreConfig
 
-const extension = @static if Sys.islinux()
-    "so"
-elseif Sys.isapple()
-    "dylib"
-elseif Sys.iswindows()
-    "dll"
-end
+"""
+    ObjectStoreConfig(max_retries, retry_timeout_sec)
 
-const rust_lib = joinpath(rust_lib_dir, "librust_store.$extension")
+Global configuration options to be passed to `init_object_store`.
+"""
+const ObjectStoreConfig = FFI_GlobalConfigOptions
 
-struct RustStoreConfig
-    max_retries::Culonglong
-    retry_timeout_sec::Culonglong
-end
 
-const RUST_STORE_STARTED = Ref(false)
+const OBJECT_STORE_STARTED = Ref(false)
 const _INIT_LOCK::ReentrantLock = ReentrantLock()
-function init_rust_store(config::RustStoreConfig = RustStoreConfig(15, 150))
+function init_object_store(config::ObjectStoreConfig=ObjectStoreConfig(15, 150))
     Base.@lock _INIT_LOCK begin
-        if RUST_STORE_STARTED[]
+        if OBJECT_STORE_STARTED[]
             return
         end
-        res = @ccall rust_lib.start(config::RustStoreConfig)::Cint
+        res = @ccall libobject_store_ffi.start(config::FFI_GlobalConfigOptions)::Cint
         if res != 0
             error("Failed to init_rust_store")
         end
-        RUST_STORE_STARTED[] = true
+        OBJECT_STORE_STARTED[] = true
     end
 end
 
@@ -60,43 +44,35 @@ function Base.show(io::IO, credentials::AzureCredentials)
     print(io, repr(credentials.host), ")")
 end
 
-const _AzureCredentialsFFI = NTuple{4,Cstring}
 
 function Base.cconvert(::Type{Ref{AzureCredentials}}, credentials::AzureCredentials)
-   credentials_ffi = (
+   credentials_ffi = FFI_AzureCredentials(
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.account)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.container)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.key)),
         Base.unsafe_convert(Cstring, Base.cconvert(Cstring, credentials.host))
-    )::_AzureCredentialsFFI
+    )
     # cconvert ensures its outputs are preserved during a ccall, so we can crate a pointer
     # safely in the unsafe_convert call.
     return credentials_ffi, Ref(credentials_ffi)
 end
-function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) where {T<:_AzureCredentialsFFI}
-    return Base.unsafe_convert(Ptr{_AzureCredentialsFFI}, x[2])
+function Base.unsafe_convert(::Type{Ref{AzureCredentials}}, x::Tuple{T,Ref{T}}) where {T<:FFI_AzureCredentials}
+    return Base.unsafe_convert(Ptr{FFI_AzureCredentials}, x[2])
 end
 
-struct Response
-    result::Cint
-    length::Culonglong
-    error_message::Ptr{Cchar}
-
-    Response() = new(-1, 0, C_NULL)
-end
 
 function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(Response())
+    response = Ref(FFI_Response(LibObjectStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall rust_lib.perform_get(
+        res = @ccall libobject_store_ffi.perform_get(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
             credentials::Ref{AzureCredentials},
-            response::Ref{Response},
+            response::Ref{FFI_Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
 
@@ -114,7 +90,7 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
         response = response[]
         if response.result == 1
             err = "failed to process get with error: $(unsafe_string(response.error_message))"
-            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall libobject_store_ffi.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 
@@ -123,17 +99,17 @@ function blob_get!(path::String, buffer::AbstractVector{UInt8}, credentials::Azu
 end
 
 function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::AzureCredentials)
-    response = Ref(Response())
+    response = Ref(FFI_Response(LibObjectStore.Uninitialized, 0, C_NULL))
     size = length(buffer)
     cond = Base.AsyncCondition()
     cond_handle = cond.handle
     while true
-        res = @ccall rust_lib.perform_put(
+        res = @ccall libobject_store_ffi.perform_put(
             path::Cstring,
             buffer::Ref{Cuchar},
             size::Culonglong,
             credentials::Ref{AzureCredentials},
-            response::Ref{Response},
+            response::Ref{FFI_Response},
             cond_handle::Ptr{Cvoid}
         )::Cint
 
@@ -151,7 +127,7 @@ function blob_put(path::String, buffer::AbstractVector{UInt8}, credentials::Azur
         response = response[]
         if response.result == 1
             err = "failed to process put with error: $(unsafe_string(response.error_message))"
-            @ccall rust_lib.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
+            @ccall libobject_store_ffi.destroy_cstring(response.error_message::Ptr{Cchar})::Cint
             error(err)
         end
 

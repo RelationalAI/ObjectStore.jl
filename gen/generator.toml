@@ -1,0 +1,29 @@
+# See https://github.com/JuliaInterop/Clang.jl/blob/master/gen/generator.toml
+# for supported options.
+[general]
+# the `expression` in the following code:
+# ccall((function_name, expression), returntype, (argtype1, ...), argvalue1, ...)
+library_name = "libobject_store_ffi"
+
+# output file path relative to the `gen/` directory
+output_file_path = "../src/generated/LibObjectStore.jl"
+
+# if this entry is not empty, the generator will print the code below to the `output_file_path`.
+# module module_name
+#
+# end # module
+module_name = "LibObjectStore"
+
+# if this entry is not empty, the generator will print the code below to the `output_file_path`.
+#   using jll_pkg_name
+#   export jll_pkg_name
+# jll_pkg_name = "object_store_ffi_jll"
+jll_pkg_name = ""
+
+# identifiers that starts with the string listed in this entry will be exported.
+# In `deps/cbindgen.toml` we set exported names to be prefixed with `FFI_`
+export_symbol_prefixes = ["FFI_"]
+
+# the code in the following file will be copy-pasted to `output_file_path` before the generated code.
+# this is often used for applying custom patches, e.g. adding missing definitions.
+prologue_file_path = "./prologue.jl"
